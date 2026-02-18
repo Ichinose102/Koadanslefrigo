@@ -6,10 +6,9 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as NavigationBar from 'expo-navigation-bar';
 
-// --- CONFIGURATION ---
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY; 
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
 
@@ -39,7 +38,6 @@ export default function HomeScreen() {
   const [manualInput, setManualInput] = useState("");
 
   const regimes = ['CLASSIQUE', 'LEGER', 'VEGAN', 'SANS-GLUTEN', 'HALAL', 'KETO'];
-
   const theme = {
     bg: isDarkMode ? '#000000' : '#F2F2F7',
     card: isDarkMode ? '#1C1C1E' : '#FFFFFF',
@@ -47,18 +45,14 @@ export default function HomeScreen() {
     subText: isDarkMode ? '#AEAEB2' : '#8E8E93',
     blue: '#007AFF',
     border: isDarkMode ? '#38383A' : '#E5E5EA',
-    accent: '#FFD700'
+    accent: '#FFD700',
+    green: '#4CD964'
   };
 
   useEffect(() => {
     if (Platform.OS === 'android') {
-      const initNav = async () => {
-        try {
-          await NavigationBar.setVisibilityAsync("hidden");
-          await NavigationBar.setBehaviorAsync("overlay-swipe"); 
-        } catch (e) { console.log(e); }
-      };
-      initNav();
+      NavigationBar.setVisibilityAsync("hidden");
+      NavigationBar.setBehaviorAsync("overlay-swipe");
     }
   }, []);
 
@@ -94,32 +88,39 @@ export default function HomeScreen() {
     setCourses(newCourses);
   };
 
-  const genererRecettes = async () => {
+  // --- MOTEUR IA AVEC PLANIFICATEUR, ACCORDS ET PRIX ---
+  const genererRecettes = async (isPlanificateur = false) => {
     if (frigo.length === 0) return Alert.alert("Frigo vide", "Ajoute des aliments !");
     setLoading(true);
     const ingredientsStr = frigo.map(i => i.nom).join(', ');
     const modeApp = hasCookeo ? "COOKEO" : hasAirFryer ? "AIR FRYER" : "CLASSIQUE";
+    const nbRecettes = isPlanificateur ? 5 : 3;
 
-    const PROMPT_ULTIME = `Tu es le Chef Master de Marmiton. Génère 3 recettes gastronomiques pour ${nbPersonnes} personnes.
-    CONTRAINTES OBLIGATOIRES :
-    - Régime alimentaire : ${regime}
-    - Appareil de cuisson imposé : ${modeApp}
-    - Ingrédients disponibles : ${ingredientsStr}
+    const PROMPT_GIGA = `Tu es le Chef Master de Marmiton et un expert en économie domestique. 
+    Génère ${nbRecettes} recettes gastronomiques pour ${nbPersonnes} pers.
+    CONTRAINTES : Régime ${regime}, Appareil ${modeApp}, Ingrédients : ${ingredientsStr}.
 
-    CONSIGNES DE RÉDACTION :
-    1. CHAQUE ÉTAPE doit être très détaillée (minimum 80 mots). Explique la technique (ex: réaction de Maillard, nacrer, réduction).
-    2. Utilise un ton professionnel et gourmand.
-    3. RÉPONDS UNIQUEMENT EN JSON : 
-    {"choix": [{"titre":"Nom Gourmet","note":4.9,"avis":150,"temps":"45 min","ingredients":[""],"etapes":["Description technique longue..."],"conseilChef":""}]}`;
+    POUR CHAQUE RECETTE :
+    1. Étapes XXL (80 mots mini chacune).
+    2. Estimations précises : Coût total du repas (€) et Coût par personne (€).
+    3. Accord Boisson : Suggère un vin ou boisson précise.
+    4. S'il s'agit du planificateur (5 recettes), organise-les par "Lundi, Mardi, etc.".
+
+    RÉPONDS UNIQUEMENT EN JSON : 
+    {"choix": [{
+      "titre": "", "note": 4.9, "avis": 150, "temps": "45 min",
+      "ingredients": [""], "etapes": [""], "conseilChef": "",
+      "coutTotal": "12.50€", "coutParPers": "3.10€", "accordBoisson": "Un Chardonnay bien frais"
+    }]}`;
 
     try {
-      await appelerGroq(ingredientsStr, modeApp, PROMPT_ULTIME);
+      await appelerGroq(ingredientsStr, modeApp, PROMPT_GIGA);
     } catch (e) {
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT_ULTIME }] }] })
+          body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT_GIGA }] }] })
         });
         const data = await res.json();
         traiterReponseIA(data.candidates[0].content.parts[0].text);
@@ -133,7 +134,7 @@ export default function HomeScreen() {
       headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
-        messages: [{ role: "system", content: prompt }, { role: "user", content: `Crée 3 recettes avec : ${ingredients}` }],
+        messages: [{ role: "system", content: prompt }, { role: "user", content: `Cuisine avec : ${ingredients}` }],
         response_format: { type: "json_object" }
       })
     });
@@ -148,10 +149,7 @@ export default function HomeScreen() {
       const jsonString = text.substring(start, end + 1);
       const parsed = JSON.parse(jsonString);
       const data = parsed.choix || parsed.recettes || Object.values(parsed).find(v => Array.isArray(v));
-      if (data) { 
-        setSuggestions(data); 
-        setModalSuggestionsVisible(true); 
-      }
+      if (data) { setSuggestions(data); setModalSuggestionsVisible(true); }
     } catch (e) { Alert.alert("Erreur IA", "Format invalide"); }
   };
 
@@ -165,14 +163,6 @@ export default function HomeScreen() {
         setScanModalVisible(true);
       } else { setScanned(false); }
     } catch (e) { setScanned(false); } finally { setLoading(false); }
-  };
-
-  const getNutriColor = (grade: string) => {
-    switch(grade?.toLowerCase()) {
-      case 'a': return '#008b4c'; case 'b': return '#85bb2f';
-      case 'c': return '#fcc00c'; case 'd': return '#ee8100';
-      case 'e': return '#e63e11'; default: return '#ccc';
-    }
   };
 
   if (!permission?.granted) return <View style={styles.containerCenter}><Button onPress={requestPermission} title="Activer caméra" /></View>;
@@ -218,22 +208,8 @@ export default function HomeScreen() {
         <View style={styles.dietContainer}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {regimes.map((r) => (
-                    <TouchableOpacity 
-                        key={r} 
-                        onPress={() => setRegime(r)} 
-                        style={[
-                            styles.dietBtn, 
-                            { backgroundColor: theme.card, borderColor: theme.border }, 
-                            regime === r && { borderColor: theme.blue, backgroundColor: isDarkMode ? '#1a2a3a' : '#e1f0ff' }
-                        ]}
-                    >
-                        <Text style={[
-                            styles.dietText, 
-                            { color: theme.subText }, 
-                            regime === r && { color: theme.blue, fontWeight: '900' }
-                        ]}>
-                            {r}
-                        </Text>
+                    <TouchableOpacity key={r} onPress={() => setRegime(r)} style={[styles.dietBtn, {backgroundColor: theme.card, borderColor: theme.border}, regime === r && {borderColor: theme.blue, backgroundColor: isDarkMode ? '#1a2a3a' : '#e1f0ff'}]}>
+                        <Text style={[styles.dietText, {color: theme.subText}, regime === r && {color: theme.blue, fontWeight: '900'}]}>{r}</Text>
                     </TouchableOpacity>
                 ))}
             </ScrollView>
@@ -271,7 +247,6 @@ export default function HomeScreen() {
                             {item.image ? <Image source={{uri: item.image}} style={styles.miniImage} /> : <View style={[styles.miniImage, {backgroundColor: theme.border, justifyContent:'center', alignItems:'center'}]}><Ionicons name="nutrition" size={20} color={theme.subText}/></View>}
                             <View style={{flex:1}}>
                               <Text style={{color: theme.text, fontWeight: '600'}}>{item.nom || item.titre}</Text>
-                              {item.nutriscore && <View style={[styles.nutriBadge, {backgroundColor: getNutriColor(item.nutriscore)}]}><Text style={styles.nutriText}>{item.nutriscore.toUpperCase()}</Text></View>}
                             </View>
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => {
@@ -285,28 +260,36 @@ export default function HomeScreen() {
         />
 
         {viewMode === 'frigo' && frigo.length > 0 && (
-          <TouchableOpacity style={styles.btnAction} onPress={genererRecettes}>
-              {loading ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>👨‍🍳 CUISINER ({nbPersonnes} PERS.)</Text>}
-          </TouchableOpacity>
+          <View style={{flexDirection: 'row', gap: 10}}>
+             <TouchableOpacity style={[styles.btnAction, {flex:1}]} onPress={() => genererRecettes(false)}>
+                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>👨‍🍳 3 IDÉES</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.btnAction, {flex:1, backgroundColor: theme.green}]} onPress={() => genererRecettes(true)}>
+                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>📅 SEMAINE</Text>}
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
       <Modal visible={modalSuggestionsVisible} animationType="slide">
           <View style={[styles.modalContent, {backgroundColor: theme.bg}]}>
-              <Text style={[styles.recetteTitre, {color: theme.text}]}>👨‍🍳 3 Idées pour vous :</Text>
+              <Text style={[styles.recetteTitre, {color: theme.text}]}>Vos Propositions :</Text>
               <ScrollView>
               {suggestions?.map((item, index) => (
-                  <TouchableOpacity key={index} style={[styles.cardItem, {backgroundColor: theme.card, padding: 20, marginBottom: 15}]} 
-                    onPress={() => { setRecetteSelectionnee(item); setModalSuggestionsVisible(false); setTimeout(() => setModalRecetteVisible(true), 300); }}>
+                  <TouchableOpacity key={index} style={[styles.cardItem, {backgroundColor: theme.card, padding: 15, marginBottom: 15}]} 
+                    onPress={() => { setRecetteSelectionnee(item); setModalSuggestionsVisible(false); setTimeout(() => setModalRecetteVisible(true), 200); }}>
                       <View style={{flex:1}}>
-                          <Text style={{color: theme.text, fontWeight:'bold', fontSize: 18}}>{item.titre}</Text>
-                          <Text style={{color: theme.subText, marginTop: 5}}>⭐ <Text style={{color: '#FF9500'}}>{item.note || '4.8'}</Text> ({item.avis || '120'} avis)  •  🕒 {item.temps || '25 min'}</Text>
+                          <Text style={{color: theme.text, fontWeight:'bold', fontSize: 17}}>{item.titre}</Text>
+                          <View style={{flexDirection: 'row', gap: 10, marginTop: 5}}>
+                             <Text style={{color: theme.green, fontWeight: 'bold'}}>💰 {item.coutParPers}/pers</Text>
+                             <Text style={{color: theme.subText}}>🕒 {item.temps}</Text>
+                          </View>
                       </View>
                       <Ionicons name="chevron-forward" size={24} color={theme.blue} />
                   </TouchableOpacity>
               ))}
               </ScrollView>
-              <Button title="Annuler" color="red" onPress={() => setModalSuggestionsVisible(false)} />
+              <Button title="Retour" color="red" onPress={() => setModalSuggestionsVisible(false)} />
           </View>
       </Modal>
 
@@ -316,30 +299,35 @@ export default function HomeScreen() {
               <ScrollView showsVerticalScrollIndicator={false}>
                 <Text style={[styles.recetteTitre, {color: theme.text}]}>{recetteSelectionnee.titre}</Text>
                 
+                {/* BANDEAU BUDGET ET ACCORD */}
+                <View style={[styles.infoBar, {backgroundColor: theme.card}]}>
+                   <View style={styles.infoItem}>
+                      <FontAwesome5 name="wallet" size={14} color={theme.green} />
+                      <Text style={{color: theme.text, fontSize: 12, marginLeft: 5}}>{recetteSelectionnee.coutParPers}/pers</Text>
+                   </View>
+                   <View style={styles.infoItem}>
+                      <Ionicons name="wine" size={16} color="#FF2D55" />
+                      <Text style={{color: theme.text, fontSize: 12, marginLeft: 5}}>{recetteSelectionnee.accordBoisson}</Text>
+                   </View>
+                </View>
+
                 <View style={{flexDirection: 'row', gap: 10, marginBottom: 20}}>
-                    <TouchableOpacity style={[styles.miniBtn, {backgroundColor: '#FF2D55'}]} onPress={() => {setSauvegardes([recetteSelectionnee, ...sauvegardes]); Alert.alert("❤️", "Sauvé !");}}>
-                        <Text style={styles.btnText}>Favoris</Text>
+                    <TouchableOpacity style={[styles.btnAction, {flex: 1, backgroundColor: '#FF2D55'}]} onPress={() => {setSauvegardes([recetteSelectionnee, ...sauvegardes]); Alert.alert("❤️", "Sauvé !");}}>
+                        <Text style={styles.btnText}>Sauver</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.miniBtn, {backgroundColor: theme.blue}]} onPress={() => {
+                    <TouchableOpacity style={[styles.btnAction, {flex: 1}]} onPress={() => {
                         const ings = (recetteSelectionnee.ingredients || []).map((n:any) => ({name: n, checked: false}));
                         setCourses([{ id: Date.now().toString(), titre: recetteSelectionnee.titre, items: ings }, ...courses]);
-                        Alert.alert("🛒", "Ajouté aux courses !");
+                        Alert.alert("🛒", "Ajouté !");
                     }}>
                         <Text style={styles.btnText}>+ Courses</Text>
                     </TouchableOpacity>
                 </View>
 
-                {recetteSelectionnee.conseilChef && (
-                  <View style={styles.conseilBox}>
-                    <Text style={styles.conseilTitre}>💡 Conseil du Chef</Text>
-                    <Text style={styles.conseilTexte}>{recetteSelectionnee.conseilChef}</Text>
-                  </View>
-                )}
-
                 <Text style={styles.sectionTitre}>Ingrédients :</Text>
-                {recetteSelectionnee.ingredients?.map((ing: any, i: number) => <Text key={i} style={{color: theme.text, fontSize: 16, marginTop: 4}}>• {ing}</Text>)}
+                {recetteSelectionnee.ingredients?.map((ing: any, i: number) => <Text key={i} style={{color: theme.text, fontSize: 15, marginTop: 4}}>• {ing}</Text>)}
                 
-                <Text style={styles.sectionTitre}>Préparation pas à pas :</Text>
+                <Text style={styles.sectionTitre}>Préparation détaillée :</Text>
                 {recetteSelectionnee.etapes?.map((e: any, i: number) => (
                     <View key={i} style={styles.etapeContainer}>
                         <View style={styles.etapeBadge}><Text style={{color:'white', fontWeight:'bold'}}>{i+1}</Text></View>
@@ -356,8 +344,7 @@ export default function HomeScreen() {
       <Modal visible={scanModalVisible} transparent animationType="fade">
         <View style={styles.overlay}><View style={[styles.scanConfirmBox, {backgroundColor: theme.card}]}>
             {tempProduct && <><Image source={{uri: tempProduct.image}} style={styles.largeProductImage} /><Text style={{color: theme.text, marginBottom: 20, fontWeight:'bold', textAlign:'center'}}>{tempProduct.nom}</Text>
-            <Button title="Ajouter au Frigo" color="#4CD964" onPress={() => {setFrigo([tempProduct, ...frigo]); setScanModalVisible(false); setScanned(false);}} />
-            <Button title="Annuler" color="red" onPress={() => {setScanModalVisible(false); setScanned(false);}} /></>}
+            <Button title="Ajouter" color="#4CD964" onPress={() => {setFrigo([tempProduct, ...frigo]); setScanModalVisible(false); setScanned(false);}} /></>}
         </View></View>
       </Modal>
     </SafeAreaView>
@@ -385,18 +372,17 @@ const styles = StyleSheet.create({
   tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
   cardItem: { padding: 15, borderRadius: 15, marginBottom: 10, width: '100%' },
   miniImage: { width: 45, height: 45, borderRadius: 8, marginRight: 12 },
-  nutriBadge: { width: 22, height: 22, borderRadius: 4, justifyContent: 'center', alignItems: 'center', marginTop: 4 },
-  nutriText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
   courseRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: '#eee' },
   courseText: { marginLeft: 10, fontSize: 15 },
-  btnAction: { backgroundColor: '#007AFF', padding: 16, borderRadius: 15, alignItems: 'center' },
-  btnText: { color: 'white', fontWeight: 'bold' },
-  miniBtn: { padding: 12, borderRadius: 12, flex: 1, alignItems: 'center' },
+  btnAction: { backgroundColor: '#007AFF', padding: 14, borderRadius: 15, alignItems: 'center' },
+  btnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
+  infoBar: { flexDirection: 'row', padding: 12, borderRadius: 12, marginBottom: 20, justifyContent: 'space-around' },
+  infoItem: { flexDirection: 'row', alignItems: 'center' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
   scanConfirmBox: { width: '85%', borderRadius: 25, padding: 25, alignItems: 'center' },
   largeProductImage: { width: 140, height: 140, borderRadius: 15, marginBottom: 15, resizeMode: 'contain' },
   modalContent: { flex: 1, padding: 25 },
-  recetteTitre: { fontSize: 24, fontWeight: '900', textAlign: 'center', marginBottom: 20 },
+  recetteTitre: { fontSize: 22, fontWeight: '900', textAlign: 'center', marginBottom: 20 },
   sectionTitre: { color: '#007AFF', fontWeight:'bold', marginTop: 25, fontSize: 18, marginBottom: 15 },
   etapeContainer: { flexDirection: 'row', marginBottom: 20, gap: 12 },
   etapeBadge: { backgroundColor: '#007AFF', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
