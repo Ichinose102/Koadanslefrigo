@@ -8,6 +8,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as NavigationBar from 'expo-navigation-bar';
+import * as ImagePicker from 'expo-image-picker';
 
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY; 
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
@@ -24,6 +25,10 @@ export default function HomeScreen() {
   const [courses, setCourses] = useState<any[]>([]);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   
+  const [modalTicketVisible, setModalTicketVisible] = useState(false);
+  const [produitsTicket, setProduitsTicket] = useState<any[]>([]);
+  const [ticketLoading, setTicketLoading] = useState(false);
+
   const [regime, setRegime] = useState('CLASSIQUE');
   const [nbPersonnes, setNbPersonnes] = useState(4);
   const [hasCookeo, setHasCookeo] = useState(false);
@@ -88,7 +93,27 @@ export default function HomeScreen() {
     setCourses(newCourses);
   };
 
-  // --- MOTEUR IA AVEC PLANIFICATEUR, ACCORDS ET PRIX ---
+  const handleScanTicket = async () => {
+    const result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.5 });
+    if (!result.canceled && result.assets) {
+      setTicketLoading(true);
+      const prompt = "Analyse ce ticket. Liste UNIQUEMENT les aliments en JSON : {\"items\": [\"Nom\"]}";
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: "image/jpeg", data: result.assets[0].base64 } }] }] })
+        });
+        const data = await res.json();
+        const jsonText = data.candidates[0].content.parts[0].text.match(/\{[\s\S]*\}/)[0];
+        const parsed = JSON.parse(jsonText);
+        setProduitsTicket(parsed.items.map((nom: string) => ({ id: Math.random().toString(), nom })));
+        setModalTicketVisible(true);
+      } catch (e) { Alert.alert("Erreur", "Lecture impossible."); }
+      finally { setTicketLoading(false); }
+    }
+  };
+
   const genererRecettes = async (isPlanificateur = false) => {
     if (frigo.length === 0) return Alert.alert("Frigo vide", "Ajoute des aliments !");
     setLoading(true);
@@ -96,50 +121,53 @@ export default function HomeScreen() {
     const modeApp = hasCookeo ? "COOKEO" : hasAirFryer ? "AIR FRYER" : "CLASSIQUE";
     const nbRecettes = isPlanificateur ? 5 : 3;
 
-    const PROMPT_GIGA = `Tu es le Chef Master de Marmiton et un expert en économie domestique. 
+    const PROMPT_GIGA = `Tu es le Chef Master Anti-Gaspi tu cherches a faire des recettes simple, goutues et pas trop cheres avec ce que tu peux trouver dans ton frigo. 
     Génère ${nbRecettes} recettes gastronomiques pour ${nbPersonnes} pers.
-    CONTRAINTES : Régime ${regime}, Appareil ${modeApp}, Ingrédients : ${ingredientsStr}.
+    STOCK STRICT : ${ingredientsStr}. (Interdiction d'inventer d'autres ingrédients principaux).
 
     POUR CHAQUE RECETTE :
-    1. Étapes XXL (80 mots mini chacune).
-    2. Estimations précises : Coût total du repas (€) et Coût par personne (€).
-    3. Accord Boisson : Suggère un vin ou boisson précise.
-    4. S'il s'agit du planificateur (5 recettes), organise-les par "Lundi, Mardi, etc.".
+    1. Minimum 4 étapes. Chaque étape doit être un paragraphe détaillé de 80 MOTS environ (gestes techniques, saveurs).
+    2. Coût par personne (€).
+    3. Accord Boisson simple mais précis ( juste le nom de la boisson).
+    4. Organisation par jour si planificateur (max 7 jours dans la semaine).
 
     RÉPONDS UNIQUEMENT EN JSON : 
     {"choix": [{
       "titre": "", "note": 4.9, "avis": 150, "temps": "45 min",
       "ingredients": [""], "etapes": [""], "conseilChef": "",
-      "coutTotal": "12.50€", "coutParPers": "3.10€", "accordBoisson": "Un Chardonnay bien frais"
+      "coutParPers": "3.10€", "accordBoisson": "Vin blanc sec"
     }]}`;
 
     try {
-      await appelerGroq(ingredientsStr, modeApp, PROMPT_GIGA);
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: "system", content: PROMPT_GIGA }],
+          response_format: { type: "json_object" }
+        })
+      });
+      const dataG = await response.json();
+      if (!dataG.choices) throw new Error("Groq failed");
+      traiterReponseIA(dataG.choices[0].message.content);
+
     } catch (e) {
       try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT_GIGA }] }] })
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: PROMPT_GIGA }] }],
+            generationConfig: { temperature: 0.6, maxOutputTokens: 15000 }
+          })
         });
         const data = await res.json();
         traiterReponseIA(data.candidates[0].content.parts[0].text);
-      } catch (err) { Alert.alert("Erreur", "IA indisponible"); }
+      } catch (err) {
+        Alert.alert("Erreur", "pas de recette disponible.");
+      }
     } finally { setLoading(false); }
-  };
-
-  const appelerGroq = async (ingredients: string, appareil: string, prompt: string) => {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "system", content: prompt }, { role: "user", content: `Cuisine avec : ${ingredients}` }],
-        response_format: { type: "json_object" }
-      })
-    });
-    const data = await response.json();
-    traiterReponseIA(data.choices[0].message.content);
   };
 
   const traiterReponseIA = (text: string) => {
@@ -174,7 +202,11 @@ export default function HomeScreen() {
       
       <View style={styles.headerCamera}>
         <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={flashOn} onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} />
-        <TouchableOpacity style={[styles.camBtn, {left: 15}]} onPress={() => setFlashOn(!flashOn)}>
+        <TouchableOpacity style={[styles.camBtn, {left: 15}]} onPress={handleScanTicket}>
+            {ticketLoading ? <ActivityIndicator color="white" size="small" /> : <Ionicons name="receipt" size={24} color="white" />}
+            <Text style={{color:'white', fontSize: 10, fontWeight:'bold'}}>TICKET</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.camBtn, {left: 80}]} onPress={() => setFlashOn(!flashOn)}>
             <Ionicons name={flashOn ? "flash" : "flash-off"} size={22} color={flashOn ? theme.accent : "white"} />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.camBtn, {right: 15}]} onPress={() => setIsDarkMode(!isDarkMode)}>
@@ -271,6 +303,24 @@ export default function HomeScreen() {
         )}
       </View>
 
+      {/* MODAL TICKET */}
+      <Modal visible={modalTicketVisible} animationType="slide">
+          <View style={[styles.modalContent, {backgroundColor: theme.bg, paddingTop: 50}]}>
+              <Text style={[styles.recetteTitre, {color: theme.text}]}>Vérification Ticket :</Text>
+              <FlatList data={produitsTicket} keyExtractor={item => item.id} renderItem={({ item }) => (
+                  <View style={[styles.cardItem, {backgroundColor: theme.card, flexDirection: 'row', alignItems: 'center', gap: 10}]}>
+                      <TextInput style={{flex: 1, color: theme.text}} value={item.nom} onChangeText={(t) => setProduitsTicket(prev => prev.map(p => p.id === item.id ? {...p, nom: t} : p))} />
+                      <TouchableOpacity onPress={() => setProduitsTicket(prev => prev.filter(p => p.id !== item.id))}><Ionicons name="close-circle" size={24} color="red" /></TouchableOpacity>
+                  </View>
+              )} />
+              <TouchableOpacity style={[styles.btnAction, {backgroundColor: theme.green, marginBottom: 10}]} onPress={() => { setFrigo([...produitsTicket.map(p => ({nom: p.nom, image: null})), ...frigo]); setModalTicketVisible(false); }}>
+                  <Text style={styles.btnText}>VALIDER</Text>
+              </TouchableOpacity>
+              <Button title="Annuler" color="red" onPress={() => setModalTicketVisible(false)} />
+          </View>
+      </Modal>
+
+      {/* MODAL SUGGESTIONS */}
       <Modal visible={modalSuggestionsVisible} animationType="slide">
           <View style={[styles.modalContent, {backgroundColor: theme.bg}]}>
               <Text style={[styles.recetteTitre, {color: theme.text}]}>Vos Propositions :</Text>
@@ -289,26 +339,35 @@ export default function HomeScreen() {
                   </TouchableOpacity>
               ))}
               </ScrollView>
-              <Button title="Retour" color="red" onPress={() => setModalSuggestionsVisible(false)} />
+              <Button title="Fermer" color="red" onPress={() => setModalSuggestionsVisible(false)} />
           </View>
       </Modal>
 
+      {/* MODAL RECETTE DÉTAILLÉE */}
       <Modal animationType="slide" visible={modalRecetteVisible}>
         <View style={[styles.modalContent, {backgroundColor: theme.bg}]}>
             {recetteSelectionnee && (
               <ScrollView showsVerticalScrollIndicator={false}>
+                {/* --- BOUTON RETOUR AUX SUGGESTIONS --- */}
+                <TouchableOpacity 
+                  onPress={() => { setModalRecetteVisible(false); setModalSuggestionsVisible(true); }}
+                  style={{flexDirection: 'row', alignItems: 'center', marginBottom: 15, padding: 5}}
+                >
+                  <Ionicons name="arrow-back" size={24} color={theme.blue} />
+                  <Text style={{color: theme.blue, fontWeight: 'bold', marginLeft: 8}}>Retour aux propositions</Text>
+                </TouchableOpacity>
+
                 <Text style={[styles.recetteTitre, {color: theme.text}]}>{recetteSelectionnee.titre}</Text>
                 
-                {/* BANDEAU BUDGET ET ACCORD */}
                 <View style={[styles.infoBar, {backgroundColor: theme.card}]}>
-                   <View style={styles.infoItem}>
+                    <View style={styles.infoItem}>
                       <FontAwesome5 name="wallet" size={14} color={theme.green} />
                       <Text style={{color: theme.text, fontSize: 12, marginLeft: 5}}>{recetteSelectionnee.coutParPers}/pers</Text>
-                   </View>
-                   <View style={styles.infoItem}>
+                    </View>
+                    <View style={styles.infoItem}>
                       <Ionicons name="wine" size={16} color="#FF2D55" />
                       <Text style={{color: theme.text, fontSize: 12, marginLeft: 5}}>{recetteSelectionnee.accordBoisson}</Text>
-                   </View>
+                    </View>
                 </View>
 
                 <View style={{flexDirection: 'row', gap: 10, marginBottom: 20}}>
@@ -327,26 +386,33 @@ export default function HomeScreen() {
                 <Text style={styles.sectionTitre}>Ingrédients :</Text>
                 {recetteSelectionnee.ingredients?.map((ing: any, i: number) => <Text key={i} style={{color: theme.text, fontSize: 15, marginTop: 4}}>• {ing}</Text>)}
                 
-                <Text style={styles.sectionTitre}>Préparation détaillée :</Text>
+                <Text style={styles.sectionTitre}>Préparation Masterclass (+80 mots/étape) :</Text>
                 {recetteSelectionnee.etapes?.map((e: any, i: number) => (
                     <View key={i} style={styles.etapeContainer}>
                         <View style={styles.etapeBadge}><Text style={{color:'white', fontWeight:'bold'}}>{i+1}</Text></View>
-                        <Text style={styles.etapeTexte}>{e}</Text>
+                        <Text style={[styles.etapeTexte, {color: theme.text}]}>{e}</Text>
                     </View>
                 ))}
                 
-                <Button title="Fermer" color="red" onPress={() => setModalRecetteVisible(false)} />
+                <View style={{marginTop: 20}}>
+                  <Button title="Tout Fermer" color="red" onPress={() => setModalRecetteVisible(false)} />
+                </View>
               </ScrollView>
             )}
         </View>
       </Modal>
 
+      {/* MODAL CONFIRMATION SCAN */}
       <Modal visible={scanModalVisible} transparent animationType="fade">
         <View style={styles.overlay}><View style={[styles.scanConfirmBox, {backgroundColor: theme.card}]}>
             {tempProduct && <><Image source={{uri: tempProduct.image}} style={styles.largeProductImage} /><Text style={{color: theme.text, marginBottom: 20, fontWeight:'bold', textAlign:'center'}}>{tempProduct.nom}</Text>
-            <Button title="Ajouter" color="#4CD964" onPress={() => {setFrigo([tempProduct, ...frigo]); setScanModalVisible(false); setScanned(false);}} /></>}
+            <View style={{flexDirection:'row', gap: 15}}>
+              <Button title="Annuler" color="red" onPress={() => {setScanModalVisible(false); setScanned(false);}} />
+              <Button title="Ajouter" color="#4CD964" onPress={() => {setFrigo([tempProduct, ...frigo]); setScanModalVisible(false); setScanned(false);}} />
+            </View></>}
         </View></View>
       </Modal>
+
     </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -358,7 +424,7 @@ const styles = StyleSheet.create({
   headerCamera: { height: '30%', backgroundColor: '#000', overflow:'hidden' },
   camBtn: { position: 'absolute', top: 15, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8, zIndex: 10 },
   manualInputRow: { flexDirection: 'row', padding: 10, position: 'absolute', bottom: 0, width: '100%', gap: 8, backgroundColor: 'rgba(0,0,0,0.4)' },
-  input: { flex: 1, height: 40, borderRadius: 10, paddingHorizontal: 15, color: '#fff' },
+  input: { flex: 1, height: 40, borderRadius: 10, paddingHorizontal: 15 },
   btnAdd: { backgroundColor: '#007AFF', width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   content: { flex: 1, padding: 15 },
   topConfigRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
@@ -370,8 +436,8 @@ const styles = StyleSheet.create({
   dietText: { fontSize: 13, fontWeight: '700' },
   tabNav: { flexDirection: 'row', borderRadius: 12, padding: 4, marginBottom: 10 },
   tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
-  cardItem: { padding: 15, borderRadius: 15, marginBottom: 10, width: '100%' },
-  miniImage: { width: 45, height: 45, borderRadius: 8, marginRight: 12 },
+  cardItem: { padding: 15, borderRadius: 15, marginBottom: 10, width: '100%', flexDirection:'row', alignItems:'center' },
+  miniImage: { width: 45, height: 45, borderRadius: 8, marginRight: 12, resizeMode: 'contain' },
   courseRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: '#eee' },
   courseText: { marginLeft: 10, fontSize: 15 },
   btnAction: { backgroundColor: '#007AFF', padding: 14, borderRadius: 15, alignItems: 'center' },
@@ -386,8 +452,5 @@ const styles = StyleSheet.create({
   sectionTitre: { color: '#007AFF', fontWeight:'bold', marginTop: 25, fontSize: 18, marginBottom: 15 },
   etapeContainer: { flexDirection: 'row', marginBottom: 20, gap: 12 },
   etapeBadge: { backgroundColor: '#007AFF', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
-  etapeTexte: { flex: 1, fontSize: 15, lineHeight: 22 },
-  conseilBox: { backgroundColor: '#FFF9C4', padding: 15, borderRadius: 12, borderLeftWidth: 5, borderLeftColor: '#FBC02D', marginBottom: 15 },
-  conseilTitre: { fontWeight: 'bold', color: '#827717' },
-  conseilTexte: { fontStyle: 'italic', color: '#333' }
+  etapeTexte: { flex: 1, fontSize: 15, lineHeight: 22 }
 });
