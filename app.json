@@ -23,7 +23,17 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
-      ]
+      ],
+      // --- AJOUTS POUR LE PLEIN ÉCRAN ---
+      "softwareKeyboardLayoutMode": "pan",
+      "statusBar": {
+        "translucent": true,
+        "barStyle": "dark-content"
+      },
+      "navigationBar": {
+        "visible": "leanback",
+        "backgroundColor": "#00000000" 
+      }
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -34,7 +44,8 @@
         {
           "cameraPermission": "Autorisez Koadanslefrigo à utiliser votre caméra pour scanner vos produits."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {
