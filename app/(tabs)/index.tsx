@@ -8,91 +8,107 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as NavigationBar from 'expo-navigation-bar';
+import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 
+// Clés API
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY; 
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
+
+const theme = {
+  bg: '#000000', card: '#1C1C1E', text: '#FFFFFF', subText: '#9CA3AF', 
+  blue: '#007AFF', border: '#2C2C2E', accent: '#FFD700', green: '#4CD964', red: '#FF3B30'
+};
+
+interface Profile {
+  id: string;
+  nom: string;
+  avatar: string;
+  exclusions: string;
+}
 
 export default function HomeScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
   const [flashOn, setFlashOn] = useState(false);
 
+  // --- DONNÉES ---
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
   const [frigo, setFrigo] = useState<any[]>([]);
   const [sauvegardes, setSauvegardes] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [suggestions, setSuggestions] = useState<any[]>([]);
-  
-  const [modalTicketVisible, setModalTicketVisible] = useState(false);
-  const [produitsTicket, setProduitsTicket] = useState<any[]>([]);
-  const [ticketLoading, setTicketLoading] = useState(false);
 
+  // --- PARAMÈTRES CUISINE ---
   const [regime, setRegime] = useState('CLASSIQUE');
   const [nbPersonnes, setNbPersonnes] = useState(4);
   const [hasCookeo, setHasCookeo] = useState(false);
   const [hasAirFryer, setHasAirFryer] = useState(false);
 
+  // --- UI ---
   const [viewMode, setViewMode] = useState<'frigo' | 'courses' | 'sauvegardes'>('frigo');
   const [modalSuggestionsVisible, setModalSuggestionsVisible] = useState(false);
   const [modalRecetteVisible, setModalRecetteVisible] = useState(false);
+  const [modalTicketVisible, setModalTicketVisible] = useState(false);
   const [scanModalVisible, setScanModalVisible] = useState(false);
+
+  
+  const [produitsTicket, setProduitsTicket] = useState<any[]>([]);
+  const [ticketLoading, setTicketLoading] = useState(false);
   const [recetteSelectionnee, setRecetteSelectionnee] = useState<any>(null);
   const [tempProduct, setTempProduct] = useState<any>(null);
   const [manualInput, setManualInput] = useState("");
+  const [newProfileName, setNewProfileName] = useState("");
+  const router = useRouter();
 
   const regimes = ['CLASSIQUE', 'LEGER', 'VEGAN', 'SANS-GLUTEN', 'HALAL', 'KETO'];
-  const theme = {
-    bg: isDarkMode ? '#000000' : '#F2F2F7',
-    card: isDarkMode ? '#1C1C1E' : '#FFFFFF',
-    text: isDarkMode ? '#FFFFFF' : '#000000',
-    subText: isDarkMode ? '#AEAEB2' : '#8E8E93',
-    blue: '#007AFF',
-    border: isDarkMode ? '#38383A' : '#E5E5EA',
-    accent: '#FFD700',
-    green: '#4CD964'
-  };
 
   useEffect(() => {
     if (Platform.OS === 'android') {
       NavigationBar.setVisibilityAsync("hidden");
       NavigationBar.setBehaviorAsync("overlay-swipe");
     }
-  }, []);
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const f = await AsyncStorage.getItem('@frigo');
-        const s = await AsyncStorage.getItem('@sauvegardes');
-        const c = await AsyncStorage.getItem('@courses_vfinal');
-        const d = await AsyncStorage.getItem('@dark');
-        const r = await AsyncStorage.getItem('@regime');
-        if (f) setFrigo(JSON.parse(f));
-        if (s) setSauvegardes(JSON.parse(s));
-        if (c) setCourses(JSON.parse(c));
-        if (d) setIsDarkMode(JSON.parse(d));
-        if (r) setRegime(r);
-      } catch (e) { console.error(e); }
-    };
     loadData();
   }, []);
 
+  const loadData = async () => {
+    try {
+      const p = await AsyncStorage.getItem('@profiles');
+      const f = await AsyncStorage.getItem('@frigo');
+      const s = await AsyncStorage.getItem('@sauvegardes');
+      const c = await AsyncStorage.getItem('@courses_vfinal');
+      if (p) setProfiles(JSON.parse(p));
+      if (f) setFrigo(JSON.parse(f));
+      if (s) setSauvegardes(JSON.parse(s));
+      if (c) setCourses(JSON.parse(c));
+    } catch (e) { console.error(e); }
+  };
+
   useEffect(() => {
+    AsyncStorage.setItem('@profiles', JSON.stringify(profiles));
     AsyncStorage.setItem('@frigo', JSON.stringify(frigo));
     AsyncStorage.setItem('@sauvegardes', JSON.stringify(sauvegardes));
     AsyncStorage.setItem('@courses_vfinal', JSON.stringify(courses));
-    AsyncStorage.setItem('@dark', JSON.stringify(isDarkMode));
-    AsyncStorage.setItem('@regime', regime);
-  }, [frigo, sauvegardes, courses, isDarkMode, regime]);
+  }, [profiles, frigo, sauvegardes, courses]);
 
-  const toggleCourseItem = (listIndex: number, itemIndex: number) => {
-    const newCourses = [...courses];
-    newCourses[listIndex].items[itemIndex].checked = !newCourses[listIndex].items[itemIndex].checked;
-    setCourses(newCourses);
+  // --- LOGIQUE PROFILS ---
+  const ajouterProfil = () => {
+    if (!newProfileName.trim()) return;
+    const nouveau: Profile = { id: Date.now().toString(), nom: newProfileName, avatar: "👨‍🍳", exclusions: "" };
+    setProfiles([...profiles, nouveau]);
+    setNewProfileName("");
+    setIsAddingProfile(false);
   };
 
+  const modifierExclusions = (id: string, texte: string) => {
+    const updated = profiles.map(p => p.id === id ? { ...p, exclusions: texte } : p);
+    setProfiles(updated);
+    if (activeProfile?.id === id) setActiveProfile({ ...activeProfile, exclusions: texte });
+  };
+
+  // --- SCAN TICKET & PRODUITS ---
   const handleScanTicket = async () => {
     const result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.5 });
     if (!result.canceled && result.assets) {
@@ -100,8 +116,7 @@ export default function HomeScreen() {
       const prompt = "Analyse ce ticket. Liste UNIQUEMENT les aliments en JSON : {\"items\": [\"Nom\"]}";
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: "image/jpeg", data: result.assets[0].base64 } }] }] })
         });
         const data = await res.json();
@@ -112,73 +127,6 @@ export default function HomeScreen() {
       } catch (e) { Alert.alert("Erreur", "Lecture impossible."); }
       finally { setTicketLoading(false); }
     }
-  };
-
-  const genererRecettes = async (isPlanificateur = false) => {
-    if (frigo.length === 0) return Alert.alert("Frigo vide", "Ajoute des aliments !");
-    setLoading(true);
-    const ingredientsStr = frigo.map(i => i.nom).join(', ');
-    const modeApp = hasCookeo ? "COOKEO" : hasAirFryer ? "AIR FRYER" : "CLASSIQUE";
-    const nbRecettes = isPlanificateur ? 5 : 3;
-
-    const PROMPT_GIGA = `Tu es le Chef Master Anti-Gaspi tu cherches a faire des recettes simple, goutues et pas trop cheres avec ce que tu peux trouver dans ton frigo. 
-    Génère ${nbRecettes} recettes gastronomiques pour ${nbPersonnes} pers.
-    STOCK STRICT : ${ingredientsStr}. (Interdiction d'inventer d'autres ingrédients principaux).
-
-    POUR CHAQUE RECETTE :
-    1. Minimum 4 étapes. Chaque étape doit être un paragraphe détaillé de 80 MOTS environ (gestes techniques, saveurs).
-    2. Coût par personne (€).
-    3. Accord Boisson simple mais précis ( juste le nom de la boisson).
-    4. Organisation par jour si planificateur (max 7 jours dans la semaine).
-
-    RÉPONDS UNIQUEMENT EN JSON : 
-    {"choix": [{
-      "titre": "", "note": 4.9, "avis": 150, "temps": "45 min",
-      "ingredients": [""], "etapes": [""], "conseilChef": "",
-      "coutParPers": "3.10€", "accordBoisson": "Vin blanc sec"
-    }]}`;
-
-    try {
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "system", content: PROMPT_GIGA }],
-          response_format: { type: "json_object" }
-        })
-      });
-      const dataG = await response.json();
-      if (!dataG.choices) throw new Error("Groq failed");
-      traiterReponseIA(dataG.choices[0].message.content);
-
-    } catch (e) {
-      try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: PROMPT_GIGA }] }],
-            generationConfig: { temperature: 0.6, maxOutputTokens: 15000 }
-          })
-        });
-        const data = await res.json();
-        traiterReponseIA(data.candidates[0].content.parts[0].text);
-      } catch (err) {
-        Alert.alert("Erreur", "pas de recette disponible.");
-      }
-    } finally { setLoading(false); }
-  };
-
-  const traiterReponseIA = (text: string) => {
-    try {
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-      const jsonString = text.substring(start, end + 1);
-      const parsed = JSON.parse(jsonString);
-      const data = parsed.choix || parsed.recettes || Object.values(parsed).find(v => Array.isArray(v));
-      if (data) { setSuggestions(data); setModalSuggestionsVisible(true); }
-    } catch (e) { Alert.alert("Erreur IA", "Format invalide"); }
   };
 
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
@@ -193,210 +141,229 @@ export default function HomeScreen() {
     } catch (e) { setScanned(false); } finally { setLoading(false); }
   };
 
-  if (!permission?.granted) return <View style={styles.containerCenter}><Button onPress={requestPermission} title="Activer caméra" /></View>;
+  // --- MOTEUR DE RECETTES GIGA (Groq -> Gemini Fallback) ---
+  const genererRecettes = async (isPlanificateur = false) => {
+    if (frigo.length === 0) return Alert.alert("Frigo vide", "Ajoutez des aliments !");
+    setLoading(true);
 
+    const ingredientsStr = frigo.map(i => i.nom).join(', ');
+    const modeApp = hasCookeo ? "COOKEO" : hasAirFryer ? "AIR FRYER" : "CLASSIQUE";
+    const nbRecettes = isPlanificateur ? 5 : 3;
+
+    const PROMPT_GIGA = `Tu es le Chef Master Anti-Gaspi. 
+    Génère ${nbRecettes} recettes gastronomiques pour ${nbPersonnes} pers. avec le mode ${modeApp}.
+    STOCK STRICT : ${ingredientsStr}.
+    EXCLUSIONS CRITIQUES (Ne jamais utiliser) : ${activeProfile?.exclusions || "Aucune"}.
+    REGIME : ${regime}.
+
+    POUR CHAQUE RECETTE :
+    1. 4 étapes détaillées (80 mots par étape).
+    2. Coût par personne (€).
+    3. Accord Boisson précis.
+    
+    RÉPONDS UNIQUEMENT EN JSON : 
+    {"choix": [{
+      "titre": "", "note": 4.9, "temps": "45 min",
+      "ingredients": [""], "etapes": [""],
+      "coutParPers": "3.10€", "accordBoisson": ""
+    }]}`;
+
+    try {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: "system", content: PROMPT_GIGA }],
+          response_format: { type: "json_object" }
+        })
+      });
+      const dataG = await response.json();
+      traiterReponseIA(dataG.choices[0].message.content);
+    } catch (e) {
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT_GIGA }] }], generationConfig: { response_mime_type: "application/json" } })
+        });
+        const data = await res.json();
+        traiterReponseIA(data.candidates[0].content.parts[0].text);
+      } catch (err) { Alert.alert("Erreur", "Service IA indisponible."); }
+    } finally { setLoading(false); }
+  };
+
+  const traiterReponseIA = (text: string) => {
+    try {
+      const clean = text.replace(/```json/gi, '').replace(/```/g, '');
+      const parsed = JSON.parse(clean);
+      const data = parsed.choix || parsed.recettes || Object.values(parsed).find(v => Array.isArray(v));
+      if (data) { setSuggestions(data); setModalSuggestionsVisible(true); }
+    } catch (e) { Alert.alert("Erreur Format", "L'IA a envoyé un message illisible."); }
+  };
+
+  // --- UI : SÉLECTION PROFIL ---
+  if (!activeProfile) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg, justifyContent: 'center' }]}>
+        <Text style={styles.profileTitle}>Chef du jour ?</Text>
+        <View style={styles.profileGrid}>
+          {profiles.map(p => (
+            <TouchableOpacity key={p.id} style={styles.profileItem} onPress={() => setActiveProfile(p)}>
+              <View style={styles.avatarCircle}><Text style={{ fontSize: 40 }}>{p.avatar}</Text></View>
+              <Text style={styles.profileName}>{p.nom}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={styles.profileItem} onPress={() => router.push('/(profiles)')}>
+            <View style={[styles.avatarCircle, { borderStyle: 'dashed', borderWidth: 2 }]}><Ionicons name="add" size={40} color={theme.subText} /></View>
+            <Text style={styles.profileName}>Nouveau</Text>
+          </TouchableOpacity>
+        </View>
+
+
+      </SafeAreaView>
+    );
+  }
+
+  // --- UI : APPLICATION ---
   return (
     <SafeAreaProvider>
     <SafeAreaView style={[styles.container, {backgroundColor: theme.bg}]} edges={['top']}>
-      <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} />
+      <StatusBar barStyle="light-content" />
       
-      <View style={styles.headerCamera}>
-        <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={flashOn} onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} />
-        <TouchableOpacity style={[styles.camBtn, {left: 15}]} onPress={handleScanTicket}>
-            {ticketLoading ? <ActivityIndicator color="white" size="small" /> : <Ionicons name="receipt" size={24} color="white" />}
-            <Text style={{color:'white', fontSize: 10, fontWeight:'bold'}}>TICKET</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.camBtn, {left: 80}]} onPress={() => setFlashOn(!flashOn)}>
-            <Ionicons name={flashOn ? "flash" : "flash-off"} size={22} color={flashOn ? theme.accent : "white"} />
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.camBtn, {right: 15}]} onPress={() => setIsDarkMode(!isDarkMode)}>
-            <Ionicons name={isDarkMode ? "sunny" : "moon"} size={22} color="white" />
-        </TouchableOpacity>
-        <View style={styles.manualInputRow}>
-            <TextInput style={[styles.input, {backgroundColor: theme.card, color: theme.text}]} placeholder="Produit..." placeholderTextColor={theme.subText} value={manualInput} onChangeText={setManualInput} />
-            <TouchableOpacity style={styles.btnAdd} onPress={() => { if(manualInput.trim()){setFrigo([{nom: manualInput, image: null}, ...frigo]); setManualInput("");} }}>
-                <Ionicons name="add" size={28} color="white" />
-            </TouchableOpacity>
-        </View>
+      {/* Header avec Switch et Exclusions */}
+      <View style={styles.appHeader}>
+        <TouchableOpacity onPress={() => router.push('/(profiles)')}><Ionicons name="people" size={26} color={theme.blue} /></TouchableOpacity>
+        <Text style={styles.appName}>{activeProfile.nom}</Text>
+        <TouchableOpacity onPress={() => {
+            Alert.prompt("Exclusions pour " + activeProfile.nom, "Aliments à ne jamais utiliser (ex: ail, crevettes) :", 
+            (t) => modifierExclusions(activeProfile.id, t), "plain-text", activeProfile.exclusions);
+        }}><Ionicons name="options" size={26} color={theme.accent} /></TouchableOpacity>
       </View>
 
+      {viewMode === 'frigo' && (
+        <View style={styles.headerCamera}>
+          <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={flashOn} onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} />
+          <TouchableOpacity style={[styles.camBtn, {left: 15}]} onPress={handleScanTicket}>
+            {ticketLoading ? <ActivityIndicator color="white" size="small" /> : <Ionicons name="receipt" size={24} color="white" />}
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.camBtn, {right: 15}]} onPress={() => setFlashOn(!flashOn)}>
+            <Ionicons name={flashOn ? "flash" : "flash-off"} size={22} color={flashOn ? theme.accent : "white"} />
+          </TouchableOpacity>
+          <View style={styles.manualInputRow}>
+            <TextInput style={styles.input} placeholder="Produits (ex: Tomate, Oeuf, Fromage)..." placeholderTextColor={theme.subText} value={manualInput} onChangeText={setManualInput} />
+            <TouchableOpacity style={styles.btnAdd} onPress={() => {
+              if (manualInput.trim()) {
+                const newItems = manualInput.split(',').map(item => ({ nom: item.trim() })).filter(item => item.nom);
+                setFrigo([...newItems, ...frigo]);
+                setManualInput("");
+              }
+            }}>
+              <Ionicons name="add" size={28} color="white" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <View style={styles.content}>
-        <View style={styles.topConfigRow}>
-            <View style={[styles.peopleSelector, {backgroundColor: theme.card}]}>
-                <TouchableOpacity onPress={() => setNbPersonnes(Math.max(1, nbPersonnes - 1))}><Ionicons name="remove-circle-outline" size={24} color={theme.blue}/></TouchableOpacity>
-                <Text style={{color: theme.text, fontWeight:'bold'}}>{nbPersonnes} PERS.</Text>
-                <TouchableOpacity onPress={() => setNbPersonnes(nbPersonnes + 1)}><Ionicons name="add-circle-outline" size={24} color={theme.blue}/></TouchableOpacity>
+        {viewMode === 'frigo' && (
+          <View style={styles.topConfigRow}>
+            <View style={styles.peopleSelector}>
+              <TouchableOpacity onPress={() => setNbPersonnes(Math.max(1, nbPersonnes - 1))}><Ionicons name="remove-circle-outline" size={24} color={theme.blue}/></TouchableOpacity>
+              <Text style={{color: theme.text, fontWeight:'bold'}}>{nbPersonnes} PERS.</Text>
+              <TouchableOpacity onPress={() => setNbPersonnes(nbPersonnes + 1)}><Ionicons name="add-circle-outline" size={24} color={theme.blue}/></TouchableOpacity>
             </View>
             <View style={styles.applianceSmallRow}>
-                <TouchableOpacity onPress={() => setHasCookeo(!hasCookeo)} style={[styles.appIconBtn, hasCookeo && {backgroundColor: theme.blue}]}>
-                    <MaterialCommunityIcons name="pot-steam" size={20} color={hasCookeo ? 'white' : theme.subText} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setHasAirFryer(!hasAirFryer)} style={[styles.appIconBtn, hasAirFryer && {backgroundColor: theme.blue}]}>
-                    <MaterialCommunityIcons name="fan" size={20} color={hasAirFryer ? 'white' : theme.subText} />
-                </TouchableOpacity>
+              <TouchableOpacity onPress={() => setHasCookeo(!hasCookeo)} style={[styles.appIconBtn, hasCookeo && {backgroundColor: theme.blue}]}><MaterialCommunityIcons name="pot-steam" size={20} color="white" /></TouchableOpacity>
+              <TouchableOpacity onPress={() => setHasAirFryer(!hasAirFryer)} style={[styles.appIconBtn, hasAirFryer && {backgroundColor: theme.blue}]}><MaterialCommunityIcons name="fan" size={20} color="white" /></TouchableOpacity>
             </View>
-        </View>
-
-        <View style={styles.dietContainer}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {regimes.map((r) => (
-                    <TouchableOpacity key={r} onPress={() => setRegime(r)} style={[styles.dietBtn, {backgroundColor: theme.card, borderColor: theme.border}, regime === r && {borderColor: theme.blue, backgroundColor: isDarkMode ? '#1a2a3a' : '#e1f0ff'}]}>
-                        <Text style={[styles.dietText, {color: theme.subText}, regime === r && {color: theme.blue, fontWeight: '900'}]}>{r}</Text>
-                    </TouchableOpacity>
-                ))}
-            </ScrollView>
-        </View>
-
-        <View style={[styles.tabNav, {backgroundColor: theme.border}]}>
-            {['frigo', 'courses', 'sauvegardes'].map((m) => (
-                <TouchableOpacity key={m} onPress={() => setViewMode(m as any)} style={[styles.tabBtn, viewMode === m && {backgroundColor: theme.card}]}>
-                    <Text style={{color: viewMode === m ? theme.blue : theme.subText, fontWeight: 'bold', fontSize: 11}}>{m.toUpperCase()}</Text>
-                </TouchableOpacity>
-            ))}
-        </View>
+          </View>
+        )}
 
         <FlatList
-            data={viewMode === 'frigo' ? frigo : viewMode === 'courses' ? courses : sauvegardes}
-            keyExtractor={(_, i) => i.toString()}
-            renderItem={({ item, index: listIdx }) => (
-                <View style={[styles.cardItem, {backgroundColor: theme.card}]}>
-                    {viewMode === 'courses' ? (
-                      <View style={{width: '100%'}}>
-                        <View style={{flexDirection:'row', justifyContent:'space-between', marginBottom: 5}}>
-                          <Text style={{color: theme.blue, fontWeight: 'bold', fontSize: 16}}>{item.titre}</Text>
-                          <TouchableOpacity onPress={() => setCourses(courses.filter((_, i) => i !== listIdx))}><Ionicons name="trash" size={18} color="red" /></TouchableOpacity>
-                        </View>
-                        {item.items.map((ing: any, ingIdx: number) => (
-                          <TouchableOpacity key={ingIdx} onPress={() => toggleCourseItem(listIdx, ingIdx)} style={styles.courseRow}>
-                            <Ionicons name={ing.checked ? "checkbox" : "square-outline"} size={22} color={ing.checked ? "#4CD964" : theme.subText} />
-                            <Text style={[styles.courseText, {color: ing.checked ? theme.subText : theme.text, textDecorationLine: ing.checked ? 'line-through' : 'none'}]}>{ing.name}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    ) : (
-                      <View style={{flexDirection:'row', alignItems:'center', justifyContent:'space-between', width: '100%'}}>
-                        <TouchableOpacity style={{flexDirection:'row', alignItems:'center', flex:1}} onPress={() => { if(viewMode === 'sauvegardes'){setRecetteSelectionnee(item); setModalRecetteVisible(true);} }}>
-                            {item.image ? <Image source={{uri: item.image}} style={styles.miniImage} /> : <View style={[styles.miniImage, {backgroundColor: theme.border, justifyContent:'center', alignItems:'center'}]}><Ionicons name="nutrition" size={20} color={theme.subText}/></View>}
-                            <View style={{flex:1}}>
-                              <Text style={{color: theme.text, fontWeight: '600'}}>{item.nom || item.titre}</Text>
-                            </View>
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => {
-                            if(viewMode === 'frigo') setFrigo(frigo.filter((_, i) => i !== listIdx));
-                            if(viewMode === 'sauvegardes') setSauvegardes(sauvegardes.filter((_, i) => i !== listIdx));
-                        }}><Ionicons name="trash-outline" size={18} color="red" /></TouchableOpacity>
-                      </View>
-                    )}
-                </View>
-            )}
+          data={viewMode === 'frigo' ? frigo : viewMode === 'courses' ? courses : sauvegardes}
+          keyExtractor={(_, i) => i.toString()}
+          renderItem={({ item, index }) => (
+            <View style={styles.cardItem}>
+              <TouchableOpacity style={{flex:1}} onPress={() => { if(viewMode === 'sauvegardes'){setRecetteSelectionnee(item); setModalRecetteVisible(true);} }}>
+                <Text style={{color: 'white', fontWeight: 'bold'}}>{item.nom || item.titre}</Text>
+                {viewMode === 'courses' && item.items?.map((ing: any, i: number) => <Text key={i} style={{color: theme.subText, fontSize: 12}}>• {ing}</Text>)}
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => {
+                if(viewMode === 'frigo') setFrigo(frigo.filter((_, i) => i !== index));
+                if(viewMode === 'sauvegardes') setSauvegardes(sauvegardes.filter((_, i) => i !== index));
+                if(viewMode === 'courses') setCourses(courses.filter((_, i) => i !== index));
+              }}><Ionicons name="trash" size={20} color={theme.red} /></TouchableOpacity>
+            </View>
+          )}
         />
 
         {viewMode === 'frigo' && frigo.length > 0 && (
-          <View style={{flexDirection: 'row', gap: 10}}>
-             <TouchableOpacity style={[styles.btnAction, {flex:1}]} onPress={() => genererRecettes(false)}>
-                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>👨‍🍳 3 IDÉES</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.btnAction, {flex:1, backgroundColor: theme.green}]} onPress={() => genererRecettes(true)}>
-                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>📅 SEMAINE</Text>}
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.btnAction} onPress={() => genererRecettes(false)}>
+            {loading ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>👨‍🍳 GÉNÉRER POUR {activeProfile.nom.toUpperCase()}</Text>}
+          </TouchableOpacity>
         )}
       </View>
 
-      {/* MODAL TICKET */}
-      <Modal visible={modalTicketVisible} animationType="slide">
-          <View style={[styles.modalContent, {backgroundColor: theme.bg, paddingTop: 50}]}>
-              <Text style={[styles.recetteTitre, {color: theme.text}]}>Vérification Ticket :</Text>
-              <FlatList data={produitsTicket} keyExtractor={item => item.id} renderItem={({ item }) => (
-                  <View style={[styles.cardItem, {backgroundColor: theme.card, flexDirection: 'row', alignItems: 'center', gap: 10}]}>
-                      <TextInput style={{flex: 1, color: theme.text}} value={item.nom} onChangeText={(t) => setProduitsTicket(prev => prev.map(p => p.id === item.id ? {...p, nom: t} : p))} />
-                      <TouchableOpacity onPress={() => setProduitsTicket(prev => prev.filter(p => p.id !== item.id))}><Ionicons name="close-circle" size={24} color="red" /></TouchableOpacity>
-                  </View>
-              )} />
-              <TouchableOpacity style={[styles.btnAction, {backgroundColor: theme.green, marginBottom: 10}]} onPress={() => { setFrigo([...produitsTicket.map(p => ({nom: p.nom, image: null})), ...frigo]); setModalTicketVisible(false); }}>
-                  <Text style={styles.btnText}>VALIDER</Text>
-              </TouchableOpacity>
-              <Button title="Annuler" color="red" onPress={() => setModalTicketVisible(false)} />
-          </View>
-      </Modal>
+      {/* Bottom Bar Navigation */}
+      <View style={styles.bottomBar}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setViewMode('frigo')}><Ionicons name="cube" size={26} color={viewMode === 'frigo' ? theme.blue : theme.subText} /></TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setViewMode('courses')}><Ionicons name="cart" size={26} color={viewMode === 'courses' ? theme.blue : theme.subText} /></TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setViewMode('sauvegardes')}><Ionicons name="heart" size={26} color={viewMode === 'sauvegardes' ? theme.blue : theme.subText} /></TouchableOpacity>
+      </View>
 
-      {/* MODAL SUGGESTIONS */}
+      {/* MODAL SUGGESTIONS IA */}
       <Modal visible={modalSuggestionsVisible} animationType="slide">
           <View style={[styles.modalContent, {backgroundColor: theme.bg}]}>
-              <Text style={[styles.recetteTitre, {color: theme.text}]}>Vos Propositions :</Text>
+              <Text style={styles.recetteTitre}>Propositions IA</Text>
               <ScrollView>
               {suggestions?.map((item, index) => (
-                  <TouchableOpacity key={index} style={[styles.cardItem, {backgroundColor: theme.card, padding: 15, marginBottom: 15}]} 
-                    onPress={() => { setRecetteSelectionnee(item); setModalSuggestionsVisible(false); setTimeout(() => setModalRecetteVisible(true), 200); }}>
+                  <TouchableOpacity key={index} style={styles.cardItem} onPress={() => { setRecetteSelectionnee(item); setModalSuggestionsVisible(false); setTimeout(() => setModalRecetteVisible(true), 200); }}>
                       <View style={{flex:1}}>
-                          <Text style={{color: theme.text, fontWeight:'bold', fontSize: 17}}>{item.titre}</Text>
-                          <View style={{flexDirection: 'row', gap: 10, marginTop: 5}}>
-                             <Text style={{color: theme.green, fontWeight: 'bold'}}>💰 {item.coutParPers}/pers</Text>
-                             <Text style={{color: theme.subText}}>🕒 {item.temps}</Text>
-                          </View>
+                          <Text style={{color: 'white', fontWeight:'bold', fontSize: 18}}>{item.titre}</Text>
+                          <Text style={{color: theme.green}}>{item.coutParPers} • {item.temps}</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={24} color={theme.blue} />
                   </TouchableOpacity>
               ))}
               </ScrollView>
-              <Button title="Fermer" color="red" onPress={() => setModalSuggestionsVisible(false)} />
+              <Button title="Fermer" color={theme.red} onPress={() => setModalSuggestionsVisible(false)} />
           </View>
       </Modal>
 
       {/* MODAL RECETTE DÉTAILLÉE */}
-      <Modal animationType="slide" visible={modalRecetteVisible}>
+      <Modal visible={modalRecetteVisible} animationType="slide">
         <View style={[styles.modalContent, {backgroundColor: theme.bg}]}>
             {recetteSelectionnee && (
               <ScrollView showsVerticalScrollIndicator={false}>
-                {/* --- BOUTON RETOUR AUX SUGGESTIONS --- */}
-                <TouchableOpacity 
-                  onPress={() => { setModalRecetteVisible(false); setModalSuggestionsVisible(true); }}
-                  style={{flexDirection: 'row', alignItems: 'center', marginBottom: 15, padding: 5}}
-                >
-                  <Ionicons name="arrow-back" size={24} color={theme.blue} />
-                  <Text style={{color: theme.blue, fontWeight: 'bold', marginLeft: 8}}>Retour aux propositions</Text>
-                </TouchableOpacity>
-
-                <Text style={[styles.recetteTitre, {color: theme.text}]}>{recetteSelectionnee.titre}</Text>
-                
-                <View style={[styles.infoBar, {backgroundColor: theme.card}]}>
-                    <View style={styles.infoItem}>
-                      <FontAwesome5 name="wallet" size={14} color={theme.green} />
-                      <Text style={{color: theme.text, fontSize: 12, marginLeft: 5}}>{recetteSelectionnee.coutParPers}/pers</Text>
-                    </View>
-                    <View style={styles.infoItem}>
-                      <Ionicons name="wine" size={16} color="#FF2D55" />
-                      <Text style={{color: theme.text, fontSize: 12, marginLeft: 5}}>{recetteSelectionnee.accordBoisson}</Text>
-                    </View>
+                <Text style={styles.recetteTitre}>{recetteSelectionnee.titre}</Text>
+                <View style={styles.infoBar}>
+                  <Text style={{color: theme.green}}>{recetteSelectionnee.coutParPers}/pers</Text>
+                  <Text style={{color: theme.accent}}>{recetteSelectionnee.accordBoisson}</Text>
                 </View>
 
                 <View style={{flexDirection: 'row', gap: 10, marginBottom: 20}}>
-                    <TouchableOpacity style={[styles.btnAction, {flex: 1, backgroundColor: '#FF2D55'}]} onPress={() => {setSauvegardes([recetteSelectionnee, ...sauvegardes]); Alert.alert("❤️", "Sauvé !");}}>
-                        <Text style={styles.btnText}>Sauver</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.btnAction, {flex: 1}]} onPress={() => {
-                        const ings = (recetteSelectionnee.ingredients || []).map((n:any) => ({name: n, checked: false}));
-                        setCourses([{ id: Date.now().toString(), titre: recetteSelectionnee.titre, items: ings }, ...courses]);
-                        Alert.alert("🛒", "Ajouté !");
-                    }}>
-                        <Text style={styles.btnText}>+ Courses</Text>
-                    </TouchableOpacity>
+                  <TouchableOpacity style={[styles.btnAction, {flex: 1, backgroundColor: theme.red}]} onPress={() => {setSauvegardes([recetteSelectionnee, ...sauvegardes]); Alert.alert("❤️", "Sauvegardé !");}}>
+                    <Text style={styles.btnText}>Favori</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.btnAction, {flex: 1}]} onPress={() => {
+                    setCourses([{ titre: recetteSelectionnee.titre, items: recetteSelectionnee.ingredients }, ...courses]);
+                    Alert.alert("🛒", "Ingrédients ajoutés !");
+                  }}>
+                    <Text style={styles.btnText}>+ Courses</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <Text style={styles.sectionTitre}>Ingrédients :</Text>
-                {recetteSelectionnee.ingredients?.map((ing: any, i: number) => <Text key={i} style={{color: theme.text, fontSize: 15, marginTop: 4}}>• {ing}</Text>)}
+                {recetteSelectionnee.ingredients?.map((ing: any, i: number) => <Text key={i} style={{color: 'white', marginBottom: 5}}>• {ing}</Text>)}
                 
-                <Text style={styles.sectionTitre}>Préparation Masterclass (+80 mots/étape) :</Text>
+                <Text style={styles.sectionTitre}>Préparation :</Text>
                 {recetteSelectionnee.etapes?.map((e: any, i: number) => (
-                    <View key={i} style={styles.etapeContainer}>
-                        <View style={styles.etapeBadge}><Text style={{color:'white', fontWeight:'bold'}}>{i+1}</Text></View>
-                        <Text style={[styles.etapeTexte, {color: theme.text}]}>{e}</Text>
-                    </View>
+                  <View key={i} style={styles.etapeContainer}>
+                    <View style={styles.etapeBadge}><Text style={{color:'white'}}>{i+1}</Text></View>
+                    <Text style={{color: theme.subText, flex:1, fontSize: 15}}>{e}</Text>
+                  </View>
                 ))}
-                
-                <View style={{marginTop: 20}}>
-                  <Button title="Tout Fermer" color="red" onPress={() => setModalRecetteVisible(false)} />
-                </View>
+                <Button title="Fermer" color={theme.red} onPress={() => setModalRecetteVisible(false)} />
               </ScrollView>
             )}
         </View>
@@ -404,11 +371,11 @@ export default function HomeScreen() {
 
       {/* MODAL CONFIRMATION SCAN */}
       <Modal visible={scanModalVisible} transparent animationType="fade">
-        <View style={styles.overlay}><View style={[styles.scanConfirmBox, {backgroundColor: theme.card}]}>
-            {tempProduct && <><Image source={{uri: tempProduct.image}} style={styles.largeProductImage} /><Text style={{color: theme.text, marginBottom: 20, fontWeight:'bold', textAlign:'center'}}>{tempProduct.nom}</Text>
+        <View style={styles.overlay}><View style={styles.modalCard}>
+            {tempProduct && <><Image source={{uri: tempProduct.image}} style={{width:100, height:100}} /><Text style={{color: 'white', marginVertical:15}}>{tempProduct.nom}</Text>
             <View style={{flexDirection:'row', gap: 15}}>
-              <Button title="Annuler" color="red" onPress={() => {setScanModalVisible(false); setScanned(false);}} />
-              <Button title="Ajouter" color="#4CD964" onPress={() => {setFrigo([tempProduct, ...frigo]); setScanModalVisible(false); setScanned(false);}} />
+              <Button title="Annuler" color={theme.red} onPress={() => {setScanModalVisible(false); setScanned(false);}} />
+              <Button title="Ajouter" color={theme.green} onPress={() => {setFrigo([tempProduct, ...frigo]); setScanModalVisible(false); setScanned(false);}} />
             </View></>}
         </View></View>
       </Modal>
@@ -420,37 +387,39 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  containerCenter: { flex: 1, justifyContent:'center', alignItems:'center' },
-  headerCamera: { height: '30%', backgroundColor: '#000', overflow:'hidden' },
-  camBtn: { position: 'absolute', top: 15, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8, zIndex: 10 },
+  appName: { fontSize: 24, fontWeight: 'bold', color: 'white' },
+  appHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, alignItems: 'center' },
+  profileTitle: { color: 'white', fontSize: 28, fontWeight: 'bold', textAlign: 'center', marginBottom: 40 },
+  profileGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 30 },
+  profileItem: { alignItems: 'center', width: 100 },
+  avatarCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: theme.card, justifyContent: 'center', alignItems: 'center', borderWeight: 1, borderColor: theme.border },
+  profileName: { color: 'white', marginTop: 10, fontWeight: '600' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+  modalCard: { backgroundColor: theme.card, width: '80%', padding: 25, borderRadius: 20, alignItems: 'center' },
+  modalTitle: { color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
+  inputModal: { width: '100%', backgroundColor: '#000', color: 'white', padding: 12, borderRadius: 10, marginBottom: 15 },
+  headerCamera: { height: '25%', backgroundColor: '#000' },
+  camBtn: { position: 'absolute', top: 15, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
   manualInputRow: { flexDirection: 'row', padding: 10, position: 'absolute', bottom: 0, width: '100%', gap: 8, backgroundColor: 'rgba(0,0,0,0.4)' },
-  input: { flex: 1, height: 40, borderRadius: 10, paddingHorizontal: 15 },
-  btnAdd: { backgroundColor: '#007AFF', width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  input: { flex: 1, height: 40, backgroundColor: theme.card, borderRadius: 10, paddingHorizontal: 15, color: 'white' },
+  btnAdd: { backgroundColor: theme.blue, width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   content: { flex: 1, padding: 15 },
-  topConfigRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  peopleSelector: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 8, borderRadius: 12 },
+  topConfigRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
+  peopleSelector: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: theme.card, padding: 8, borderRadius: 12 },
   applianceSmallRow: { flexDirection: 'row', gap: 8 },
-  appIconBtn: { width: 38, height: 38, borderRadius: 10, justifyContent: 'center', alignItems: 'center', backgroundColor: '#eee' },
-  dietContainer: { marginBottom: 10, height: 50 },
-  dietBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, marginRight: 8, borderWidth: 2, justifyContent: 'center' },
-  dietText: { fontSize: 13, fontWeight: '700' },
-  tabNav: { flexDirection: 'row', borderRadius: 12, padding: 4, marginBottom: 10 },
-  tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
-  cardItem: { padding: 15, borderRadius: 15, marginBottom: 10, width: '100%', flexDirection:'row', alignItems:'center' },
-  miniImage: { width: 45, height: 45, borderRadius: 8, marginRight: 12, resizeMode: 'contain' },
-  courseRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: '#eee' },
-  courseText: { marginLeft: 10, fontSize: 15 },
-  btnAction: { backgroundColor: '#007AFF', padding: 14, borderRadius: 15, alignItems: 'center' },
-  btnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
-  infoBar: { flexDirection: 'row', padding: 12, borderRadius: 12, marginBottom: 20, justifyContent: 'space-around' },
-  infoItem: { flexDirection: 'row', alignItems: 'center' },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
-  scanConfirmBox: { width: '85%', borderRadius: 25, padding: 25, alignItems: 'center' },
-  largeProductImage: { width: 140, height: 140, borderRadius: 15, marginBottom: 15, resizeMode: 'contain' },
-  modalContent: { flex: 1, padding: 25 },
-  recetteTitre: { fontSize: 22, fontWeight: '900', textAlign: 'center', marginBottom: 20 },
-  sectionTitre: { color: '#007AFF', fontWeight:'bold', marginTop: 25, fontSize: 18, marginBottom: 15 },
-  etapeContainer: { flexDirection: 'row', marginBottom: 20, gap: 12 },
-  etapeBadge: { backgroundColor: '#007AFF', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
-  etapeTexte: { flex: 1, fontSize: 15, lineHeight: 22 }
+  appIconBtn: { width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.card },
+  dietContainer: { marginBottom: 15 },
+  dietBtn: { padding: 10, borderRadius: 15, marginRight: 8, borderWidth: 1, borderColor: theme.border },
+  dietText: { color: theme.subText, fontWeight: 'bold' },
+  cardItem: { backgroundColor: theme.card, padding: 15, borderRadius: 15, marginBottom: 10, flexDirection: 'row', alignItems: 'center' },
+  btnAction: { backgroundColor: theme.blue, padding: 14, borderRadius: 15, alignItems: 'center' },
+  btnText: { color: 'white', fontWeight: 'bold' },
+  bottomBar: { flexDirection: 'row', height: 70, borderTopWidth: 1, borderTopColor: theme.border, paddingBottom: 10 },
+  tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  modalContent: { flex: 1, padding: 20 },
+  recetteTitre: { fontSize: 24, fontWeight: 'bold', color: 'white', textAlign: 'center', marginBottom: 20 },
+  infoBar: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20 },
+  sectionTitre: { color: theme.blue, fontSize: 18, fontWeight: 'bold', marginVertical: 15 },
+  etapeContainer: { flexDirection: 'row', marginBottom: 20, gap: 15 },
+  etapeBadge: { backgroundColor: theme.blue, width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' }
 });
